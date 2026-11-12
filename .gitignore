@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files
+data/trades.db
+data/trades.db-wal
+data/trades.db-shm
+data/demo_wallet.json
+data/memory.jsonl
+data/engine.log
+data/tg_chat_id.txt
+data/tg_offset.txt
+
+# Secrets
+.env
+config/.env
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.mypy_cache/
+
+# Build
+dist/
+build/
+
+# Local development
+check_confidence.py
+test_config.py
+debug_*.py
+*.tmp

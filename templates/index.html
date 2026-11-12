@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meme Engine - Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 20px 0; border-bottom: 1px solid #1a1a2e; margin-bottom: 20px;
+        }
+        .header h1 { font-size: 24px; color: #fff; }
+        .header h1 span { color: #8b5cf6; }
+        .status-badge { padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .status-paper { background: #eab30820; color: #eab308; border: 1px solid #eab30840; }
+        .status-running { background: #22c55e20; color: #22c55e; border: 1px solid #22c55e40; }
+        .status-stopped { background: #ef444420; color: #ef4444; border: 1px solid #ef444440; }
+        .status-halted { background: #ef4444; color: #fff; border: 1px solid #ef4444; animation: pulse 1s infinite; }
+        .halt-banner { background: #ef444420; border: 1px solid #ef4444; color: #ef4444; padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center; font-weight: 600; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        
+        .card {
+            background: #12121a; border: 1px solid #1a1a2e; border-radius: 12px;
+            padding: 20px; transition: border-color 0.2s;
+        }
+        .card:hover { border-color: #8b5cf640; }
+        .card-label { font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .card-value { font-size: 28px; font-weight: 700; color: #fff; }
+        .card-sub { font-size: 12px; color: #888; margin-top: 4px; }
+        .card-value.positive { color: #22c55e; }
+        .card-value.negative { color: #ef4444; }
+        
+        .section { margin-bottom: 24px; }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .section-title { font-size: 16px; font-weight: 600; color: #fff; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 12px 16px; font-size: 11px; color: #666; text-transform: uppercase; 
+             letter-spacing: 1px; border-bottom: 1px solid #1a1a2e; }
+        td { padding: 12px 16px; border-bottom: 1px solid #1a1a2e20; font-size: 13px; }
+        tr:hover { background: #1a1a2e20; }
+        
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-solana { background: #9945ff20; color: #9945ff; }
+        .badge-base { background: #0052ff20; color: #0052ff; }
+        .badge-robinhood { background: #00c80520; color: #00c805; }
+        .badge-buy { background: #22c55e20; color: #22c55e; }
+        .badge-sell { background: #ef444420; color: #ef4444; }
+        
+        .signal-feed { max-height: 400px; overflow-y: auto; }
+        .signal-item { padding: 12px; border-bottom: 1px solid #1a1a2e20; display: flex; gap: 12px; align-items: center; }
+        .signal-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .signal-dot.high { background: #22c55e; }
+        .signal-dot.medium { background: #eab308; }
+        .signal-dot.low { background: #666; }
+        .signal-info { flex: 1; }
+        .signal-token { font-weight: 600; color: #fff; font-size: 13px; }
+        .signal-meta { font-size: 11px; color: #888; }
+        .signal-score { font-weight: 700; font-size: 14px; }
+        
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+        .btn-primary { background: #8b5cf6; color: #fff; }
+        .btn-primary:hover { background: #7c3aed; }
+        
+        .empty-state { text-align: center; padding: 40px; color: #666; }
+        
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .live-dot { animation: pulse 2s infinite; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🚀 <span>Meme</span> Engine</h1>
+            <div style="display:flex;gap:8px;align-items:center">
+                <div id="paperBadge" class="status-badge status-paper">PAPER MODE</div>
+                <div id="statusBadge" class="status-badge status-stopped">STOPPED</div>
+            </div>
+        </header>
+        <div id="haltBanner" class="halt-banner" style="display:none"></div>
+        
+        <div class="grid" id="statsGrid">
+            <div class="card">
+                <div class="card-label">Total Trades</div>
+                <div class="card-value" id="totalTrades">0</div>
+                <div class="card-sub" id="payoffSub"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">Open Positions</div>
+                <div class="card-value" id="openPositions">0</div>
+                <div class="card-sub">Max 10 (risk gate)</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Total PnL</div>
+                <div class="card-value" id="totalPnl">$0.00</div>
+                <div class="card-sub" id="equitySub"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">Win Rate / Payoff</div>
+                <div class="card-value" id="winRate">0%</div>
+                <div class="card-sub" id="payoffDetail"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">Sharpe / Sortino</div>
+                <div class="card-value" id="sharpeVal" style="font-size:20px">-</div>
+                <div class="card-sub" id="calmarSub"></div>
+            </div>
+            <div class="card">
+                <div class="card-label">Max DD</div>
+                <div class="card-value" id="maxDD" style="font-size:20px">0%</div>
+                <div class="card-sub">Halt at -8%, soft -3% halves size</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Tokens Scanned</div>
+                <div class="card-value" id="tokensScanned">0</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Signal Queue</div>
+                <div class="card-value" id="signalQueue">0</div>
+            </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Open Positions</span>
+                    <span class="live-dot" style="width:8px;height:8px;background:#22c55e;border-radius:50;display:inline-block"></span>
+                </div>
+                <div class="card" style="padding:0; overflow: hidden;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Token</th>
+                                <th>Chain</th>
+                                <th>Entry</th>
+                                <th>Current</th>
+                                <th>PnL</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positionsTable">
+                            <tr><td colspan="5" class="empty-state">No open positions</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-header">
+                    <span class="section-title">Recent Signals</span>
+                </div>
+                <div class="card signal-feed" id="signalFeed">
+                    <div class="empty-state">Waiting for signals...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        async function fetchStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                
+                if (data.halted) {
+                    document.getElementById('statusBadge').className = 'status-badge status-halted';
+                    document.getElementById('statusBadge').textContent = 'HALTED';
+                    document.getElementById('haltBanner').style.display = 'block';
+                    document.getElementById('haltBanner').textContent = '⛔ ' + data.halt_reason;
+                } else {
+                    document.getElementById('statusBadge').className = 
+                        `status-badge ${data.running ? 'status-running' : 'status-stopped'}`;
+                    document.getElementById('statusBadge').textContent = 
+                        data.running ? 'RUNNING' : 'STOPPED';
+                    document.getElementById('haltBanner').style.display = 'none';
+                }
+                document.getElementById('paperBadge').style.display = data.paper_mode ? 'block' : 'none';
+                if (data.paper_mode) document.getElementById('paperBadge').textContent = 'PAPER MODE';
+                
+                document.getElementById('tokensScanned').textContent = data.seen_tokens || 0;
+                document.getElementById('signalQueue').textContent = data.queue_size || 0;
+                
+                if (data.stats) {
+                    document.getElementById('totalTrades').textContent = data.stats.total_trades || 0;
+                    document.getElementById('openPositions').textContent = data.stats.open_positions || 0;
+                    const pnl = data.stats.total_pnl_usd || 0;
+                    const pnlEl = document.getElementById('totalPnl');
+                    pnlEl.textContent = `$${pnl.toFixed(2)}`;
+                    pnlEl.className = `card-value ${pnl >= 0 ? 'positive' : 'negative'}`;
+                    document.getElementById('equitySub').textContent = data.stats.equity ? `Equity $${data.stats.equity.toFixed(0)}` : '';
+                    document.getElementById('winRate').textContent = `${(data.stats.win_rate || 0).toFixed(1)}%`;
+                    document.getElementById('payoffDetail').textContent = `Payoff ${ (data.stats.payoff_ratio||0).toFixed(2)}x`;
+                    document.getElementById('payoffSub').textContent = `Avg win ${(data.stats.avg_win_percent||0).toFixed(0)}% / loss ${(data.stats.avg_loss_percent||0).toFixed(0)}%`;
+                    document.getElementById('sharpeVal').textContent = `S ${(data.stats.sharpe||0).toFixed(2)} / So ${(data.stats.sortino||0).toFixed(2)}`;
+                    document.getElementById('calmarSub').textContent = `Calmar ${(data.stats.calmar||0).toFixed(2)} CAGR ${(data.stats.cagr_pct||0).toFixed(1)}%`;
+                    const dd = data.stats.max_drawdown_pct || 0;
+                    const ddEl = document.getElementById('maxDD');
+                    ddEl.textContent = dd.toFixed(1) + '%';
+                    ddEl.className = 'card-value' + (dd < -8 ? ' negative' : dd < -3 ? '' : '');
+                }
+            } catch(e) { console.error('Status fetch error:', e); }
+        }
+        
+        async function fetchPositions() {
+            try {
+                const resp = await fetch('/api/positions');
+                const positions = await resp.json();
+                const tbody = document.getElementById('positionsTable');
+                
+                if (!positions.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No open positions</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = positions.map(p => {
+                    const entry = Number(p.entry_price) || 0;
+                    const cur = Number(p.current_price ?? p.entry_price) || entry;
+                    let pnl = 0;
+                    if (entry > 0 && isFinite(cur) && isFinite(entry)) pnl = ((cur - entry) / entry) * 100;
+                    if (!isFinite(pnl)) pnl = 0;
+                    const addr = p.token_address || '';
+                    const explorer = p.chain === 'base' ? `https://basescan.org/token/${addr}` : p.chain === 'robinhood' ? `https://robinhoodchain.blockscout.com/token/${addr}` : p.chain === 'solana' ? `https://solscan.io/token/${addr}` : `https://dexscreener.com/${p.chain}/${addr}`;
+                    const dexs = `https://dexscreener.com/${p.chain}/${addr}`;
+                    return `
+                        <tr>
+                            <td>
+                                <strong>${(p.token_symbol || '???').substring(0, 8)}</strong><br>
+                                <span style="color:#888;font-size:11px;cursor:pointer" onclick="navigator.clipboard.writeText('${addr}')" title="Click to copy full address">${addr.slice(0,6)}...${addr.slice(-4)} 📋</span>
+                                <a href="${explorer}" target="_blank" style="color:#8b5cf6;font-size:11px;margin-left:6px">explorer</a>
+                                <a href="${dexs}" target="_blank" style="color:#22c55e;font-size:11px;margin-left:4px">dex</a>
+                            </td>
+                            <td><span class="badge badge-${p.chain}">${p.chain}</span></td>
+                            <td>$${isFinite(entry) ? entry.toFixed(8) : '0.00000000'}</td>
+                            <td>$${isFinite(cur) ? cur.toFixed(8) : entry.toFixed(8)}</td>
+                            <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}${isFinite(pnl) ? pnl.toFixed(2) : '0.00'}%</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch(e) { console.error('Positions fetch error:', e); }
+        }
+        
+        // Poll every 3 seconds
+        setInterval(fetchStatus, 3000);
+        setInterval(fetchPositions, 3000);
+        
+        fetchStatus();
+        fetchPositions();
+    </script>
+</body>
+</html>

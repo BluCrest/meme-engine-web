@@ -1,0 +1,22 @@
+# Core
+pyyaml>=6.0
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+asyncio-throttle>=1.0.0
+
+# Solana
+solders>=0.20.0
+base58>=2.1.0
+
+# EVM
+web3>=6.0.0
+
+# WebSocket
+websockets>=12.0
+
+# Database
+# Uses built-in sqlite3
+
+# Flask (for dashboard)
+flask>=3.0.0
+flask-cors>=4.0.0
