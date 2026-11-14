@@ -1,8 +1,8 @@
 chains:
   solana:
     enabled: true
-    rpc_url: "https://api.mainnet-beta.solana.com"
-    ws_url: "wss://api.mainnet-beta.solana.com"
+    rpc_url: "https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
+    ws_url: "wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
     private_key: "${SOLANA_PRIVATE_KEY}"
     jupiter_api: "https://quote-api.jup.ag/v6"
     pump_fun_program: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
@@ -88,7 +88,7 @@ overseer:
   min_overall_score: 60        # strict after 20 trades
   lenient_min_score: 45        # lenient bootstrap for first 20 trades (memes: unknown dev is normal)
   lenient_until_trades: 20
-  agent_timeout_seconds: 12
+  agent_timeout_seconds: 20
   weights:  # strict
     dev: 0.35
     holders: 0.25
@@ -180,7 +180,17 @@ paper:
   slippage_pct: 2.0            # applied AGAINST us on every fill (up on buys, down on sells)
   fee_pct: 0.30                # DEX fee taken on every fill
   fallback_sol_usd: 200.0      # SOL price for ledger if no feed
-  reset_on_boot: true          # fresh book every boot; zombie paper positions closed FLAT (no fake pnl)
+  reset_on_boot: false         # PERSIST the book across restarts (director: lifetime P&L must accumulate; exit manager rehydrates open positions from db)
+
+# Graduation-entry scanner - Sol's core edge (director 2026-11-14)
+# Buy at PumpSwap migration; backtest n=250 honest: hold24h+stop30 June +112% / July +60% EV;
+# GT-open == real first-trade-price validated live. Security vet is HARD (mint/freeze revoked or no trade).
+grad_entry:
+  enabled: true
+  score: 75                    # feeds the confidence ladder (75 -> base 2% cap)
+  price_timeout_seconds: 240   # DexScreener retry window for fresh pools (never buy blind)
+  price_poll_seconds: 20
+  max_mcap_usd: 0              # 0 = no mcap cap (edge is the event itself)
 
 telegram:
   bot_token: "${TELEGRAM_BOT_TOKEN}"

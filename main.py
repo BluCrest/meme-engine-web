@@ -14,6 +14,10 @@ from utils.database import TradeDatabase
 from scout.new_pair_detector import NewPairDetector
 from scout.volume_scanner import VolumeScanner
 from scout.smart_money_tracker import SmartMoneyTracker
+try:
+    from scout.grad_entry_scanner import GradEntryScanner
+except ImportError:
+    from src.scout.grad_entry_scanner import GradEntryScanner
 from execution.swap_executor import SwapExecutor
 from exit.exit_manager import ExitManager
 try:
@@ -68,7 +72,7 @@ logging.basicConfig(
         logging.FileHandler('data/engine.log', encoding='utf-8')
     ]
 )
-logger = logging.getLogger('MemeEngine')
+logger = logging.getLogger('Sol')
 
 # Telegram frontend (token from config/.env TELEGRAM_BOT_TOKEN only - never hardcoded)
 try:
@@ -121,6 +125,8 @@ class MemeEngine:
         self.new_pair_detector = NewPairDetector(self.config, self._on_new_signal)
         self.volume_scanner = VolumeScanner(self.config, self._on_new_signal)
         self.smart_money_tracker = SmartMoneyTracker(self.config, self._on_new_signal)
+        # Graduation-entry scanner (director edge: buy at PumpSwap migration; backtest June+112%/July+60% EV)
+        self.grad_scanner = GradEntryScanner(self.config, self._on_new_signal)
         self.running = False
         self.signal_queue = asyncio.Queue()
         self.paper_mode = self.config.get('execution', {}).get('paper_mode', True)
@@ -171,7 +177,7 @@ class MemeEngine:
                     self.overseer_monitor.tg_bot = self.tg_bot
                 logger.info(f"Telegram TG frontend live: bot 8891393719:... (paper $0.10) push updates enabled")
                 try:
-                    self.tg_bot.broadcast(f"🚀 Meme Engine started (paper $0.10) chains: {', '.join([k for k,v in self.config.get('chains',{}).items() if v.get('enabled')])} - send /status")
+                    self.tg_bot.broadcast(f"🚀 <b>Sol</b> started (paper) chains: {', '.join([k for k,v in self.config.get('chains',{}).items() if v.get('enabled')])} - send /status")
                 except: pass
             except Exception as e:
                 logger.warning(f"TG bot failed: {e}")
@@ -197,8 +203,10 @@ class MemeEngine:
             asyncio.create_task(self.new_pair_detector.start(chains)),
             asyncio.create_task(self.volume_scanner.start(chains)),
             asyncio.create_task(self.smart_money_tracker.start(chains)),
+            asyncio.create_task(self.grad_scanner.start(chains)),
             asyncio.create_task(self.exit_manager.start(chains)),
             asyncio.create_task(self._process_signals()),
+            asyncio.create_task(self._balance_broadcast_loop()),
         ]
         if self.lookup:
             async def _run_lookup():
@@ -236,6 +244,7 @@ class MemeEngine:
         await self.new_pair_detector.stop()
         await self.volume_scanner.stop()
         await self.smart_money_tracker.stop()
+        await self.grad_scanner.stop()
         await self.exit_manager.stop()
         if self.alert_manager:
             await self.alert_manager.stop()
@@ -259,7 +268,11 @@ class MemeEngine:
                         asyncio.create_task(self.lifecycle.track_token(signal['token_address'], signal.get('chain','robinhood'), signal.get('deployer'), signal.get('liquidity_usd',0)))
                     except: pass
                 is_coin_signal = signal.get('source') in ('uniswap_v3','pump_fun','volume_scanner','birdeye_volume','dexscreener_trending','dexscreener_robinhood')
-                if self.overseer and is_coin_signal:
+                if signal.get('source') == 'pumpfun_migration':
+                    # Grad signals: security ALREADY vetted by scanner (hard-skip policy);
+                    # blend skipped by design - the edge is the graduation event, gate stays off
+                    logger.info(f"Grad signal routed direct: {signal.get('token_address','')[:8]}... price ${signal.get('price',0):.8f}")
+                elif self.overseer and is_coin_signal:
                     enriched = await self.overseer.investigate(signal, self.config['chains'])
                     if enriched.get('verdict') != 'BUY':
                         logger.info(f"Overseer SKIP {signal.get('token_address','')[:8]}... blended {enriched.get('blended_score')} < {enriched.get('threshold_used',60)} {'LENIENT' if enriched.get('is_lenient') else ''}")
@@ -272,22 +285,48 @@ class MemeEngine:
                 logger.error(f"Signal processing error: {e}", exc_info=True)
     
     async def _balance_broadcast_loop(self):
-        """Periodically push paper balance to Telegram"""
+        """Honest paper book report to Telegram: live SOL mark, wallet snapshot, realized PnL.
+        Director order 2026-11-14: efficient reporting, no inflation - all marks live, all costs in."""
         import asyncio
-        last_reported = 0
+        last_sent = ""
         while self.running:
             try:
-                await asyncio.sleep(60)  # every minute
-                equity = self.db.get_current_equity(self.initial_capital)
-                pnl = equity - self.initial_capital
-                pnl_pct = (pnl / self.initial_capital) * 100
-                # Only broadcast if changed > $1 or every 5m to avoid flood
-                if abs(equity - last_reported) >= 1.0 or last_reported == 0:
-                    last_reported = equity
-                    try:
-                        txt = f"💰 <b>Paper Balance</b>\n${equity:.2f} (${pnl:+.2f} {pnl_pct:+.1f}%)\n${self.initial_capital:.2f} initial\n⚙️ Paper $0.10 mode | ATR 1.8x stop"
-                        self.tg_push(txt)
-                    except: pass
+                await asyncio.sleep(60)
+                # LIVE SOL price mark (fallback $200 would inflate the book 2.8x at $72 SOL)
+                try:
+                    sol_live = await self.executor.get_token_live_data(
+                        "So11111111111111111111111111111111111111112", "solana", self.config['chains'])
+                    if sol_live.get('priceUsd', 0) > 0:
+                        self.demo_wallet.set_sol_price(sol_live['priceUsd'])
+                except Exception:
+                    pass
+                snap = self.demo_wallet.snapshot()
+                stats = self.db.get_stats()
+                equity_usd = snap['equity_usd']
+                start_sol = self.demo_wallet.initial_sol
+                equity_sol = self.demo_wallet.sol + sum(
+                    (h.get('mark_usd', h['cost_usd']) / max(self.demo_wallet.sol_usd, 1e-9))
+                    for h in self.demo_wallet.holdings.values())
+                pnl_sol = equity_sol - start_sol
+                pnl_pct = pnl_sol / start_sol * 100
+                closed = stats.get('total_trades', 0) or 0
+                wins = round(stats.get('win_rate', 0) / 100 * closed) if closed else 0
+                realized = stats.get('total_pnl_usd', 0) or 0
+                # SOL IS THE BASE (director order 2026-11-14): profits = SOL multiplied.
+                # USD shown only for comparison - it fluctuates, SOL multiples are the truth.
+                txt = (
+                    f"💰 <b>Sol Book</b> - SOL base\n"
+                    f"Equity <b>{equity_sol:.4f} SOL</b> (start {start_sol:.2f} SOL, {pnl_sol:+.4f} / {pnl_pct:+.1f}%)\n"
+                    f"Cash {self.demo_wallet.sol:.4f} SOL + Holdings {equity_sol - self.demo_wallet.sol:.4f} SOL ({snap['holdings']} tok)\n"
+                    f"[USD ref: ${equity_usd:.2f} @ ${snap['sol_usd']:.2f}/SOL]\n"
+                    f"Closed {closed} (W{wins}/L{closed - wins}) | Open {len(self.exit_manager.get_all_states())} | Realized ${realized:+.2f}\n"
+                    f"Honest fills: fee {snap['fee_pct']:.2f}% + slip {snap['slippage_pct']:.1f}% BOTH legs | {snap['fills']} fills"
+                )
+                # push on material change (fills changed) so TG stays alive but not flooded
+                if txt != last_sent and (last_sent == "" or snap['fills'] != getattr(self, '_last_fills', -1)):
+                    self._last_fills = snap['fills']
+                    last_sent = txt
+                    self.tg_push(txt)
             except Exception as e:
                 logger.debug(f"Balance broadcast error: {e}")
     
@@ -360,6 +399,12 @@ class MemeEngine:
         # LIVE DATA: fetch live price/mcap/liquidity before sizing (not synthetic - only paper money is demo)
         live = await self.executor.get_token_live_data(token_address, chain, self.config['chains'])
         live_price = live.get('priceUsd', 0) or signal.get('price', 0) or 0
+        if not live.get('priceUsd', 0) and signal.get('source') == 'pumpfun_migration' and signal.get('price'):
+            # Grad path: scanner already retried DexScreener for minutes and holds a verified
+            # price; DexScreener double-fetch can lag behind it - use scanner's price, not skip
+            live = {'priceUsd': signal['price'], 'mcap': signal.get('mcap', 0),
+                    'liquidityUsd': signal.get('liquidity_usd', 0), 'volume24h': 0}
+            logger.info(f"Grad fallback price for {token_address[:8]}...: ${live['priceUsd']:.8f}")
         if live_price and live_price > 0:
             signal['price'] = live_price
             signal['mcap'] = live.get('mcap', 0)
@@ -391,8 +436,10 @@ class MemeEngine:
             logger.info(f"Max positions ({max_positions}) reached, skipping")
             return
 
-        # Minimum score threshold
-        min_score = self.config.get('scout', {}).get('min_score', 50)
+        # Minimum score threshold - use the overseer's ACTUAL gate when present
+        # (lenient 45 bootstrap vs strict 60). Hard-coding scout.min_score here was
+        # re-killing lenient 45-59 passes at the second gate (45-vs-60 contradiction).
+        min_score = signal.get('threshold_used') or self.config.get('scout', {}).get('min_score', 50)
         if score < min_score:
             logger.debug(f"Score {score} below threshold {min_score}, skipping")
             return

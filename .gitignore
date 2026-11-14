@@ -47,8 +47,13 @@ data/tg_offset.txt
 # Secrets
 .env
 config/.env
+config/sol.env
+*.env
 *.pem
 *.key
+
+# Local boot logs
+boot_*.txt
 
 # OS
 .DS_Store

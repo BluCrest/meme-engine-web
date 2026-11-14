@@ -24,6 +24,9 @@ class Overseer:
         # Lenient weights: reduce dev penalty early (memes: unknown dev is normal)
         self.strict_weights = overseer_cfg.get('weights', {'dev': 0.35, 'holders': 0.25, 'kols': 0.15, 'profit_wallets': 0.25})
         self.lenient_weights = overseer_cfg.get('lenient_weights', {'dev': 0.20, 'holders': 0.30, 'kols': 0.10, 'profit_wallets': 0.40})
+        # Solana hard safety: if the security agent (mint/freeze authority) cannot vet
+        # the token, do NOT trade on blended guesses - SKIP. Config: overseer.require_security_solana
+        self.require_security_solana = overseer_cfg.get('require_security_solana', True)
 
     async def investigate(self, coin_signal: Dict, chains_config: dict) -> Dict:
         """Fan-out to wallet agents for a coin. Returns enriched signal with wallet scores.
@@ -158,6 +161,24 @@ class Overseer:
         scout_weight = 0.5 if is_lenient else 0.4
         blended = round(overall * (1 - scout_weight) + scout_score * scout_weight, 1)
 
+        # Hard veto: creator-held mint/freeze authority on solana = dev can mint infinite
+        # supply / freeze your tokens at will. Weight blending dilutes this (0.20) so it
+        # must be a veto, not a nudge. Program-held authorities are whitelisted in the
+        # agent and never carry these flags.
+        veto = False
+        if chain == 'solana':
+            for r in results.values():
+                if r.get('available') and r.get('flag') in ('MINT_AUTH_ACTIVE', 'FREEZE_AUTH_ACTIVE'):
+                    veto = True
+                    break
+
+        verdict = 'SKIP' if veto else ('BUY' if blended >= threshold else 'SKIP')
+        # Hard safety: solana token not vetted by security agent (RPC fail/timeout) = untradeable
+        if chain == 'solana' and self.require_security_solana and not results.get('security', {}).get('available'):
+            verdict = 'SKIP'
+            flags.append('SECURITY_UNVETTED_HARD_SKIP')
+            logger.info(f"Overseer HARD-SKIP {token[:8]}... security agent unavailable (mint/freeze authority unknown) - refusing to trade unvetted token")
+
         enriched = {
             **coin_signal,
             'overseer_score': overall,
@@ -166,13 +187,16 @@ class Overseer:
             'agent_results': results,
             'overseer_time_ms': int((time.time() - start)*1000),
             'is_lenient': is_lenient,
-            'verdict': 'BUY' if blended >= threshold else 'SKIP',
+            'veto': veto,
+            'verdict': verdict,
             'threshold_used': threshold,
             'reasons': self._reasons(results, blended, threshold)
         }
 
         mode = "LENIENT" if is_lenient else "STRICT"
-        logger.info(f"Overseer {mode} {lenient_reason} {token[:8]}... on {chain}: scout {scout_score} -> wallets {overall} -> blended {blended}/{threshold} verdict {enriched['verdict']} ({', '.join(flags)}) {enriched['overseer_time_ms']}ms")
+        if veto:
+            mode += " VETO"
+        logger.info(f"Overseer {mode} {lenient_reason} {token[:8]}... on {chain}: scout {scout_score} -> wallets {overall} -> blended {blended}/{threshold} verdict {verdict} ({', '.join(flags)}) {enriched['overseer_time_ms']}ms")
         return enriched
 
     def _reasons(self, results: Dict, blended: float, threshold: float = None) -> List[str]:
