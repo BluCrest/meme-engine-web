@@ -37,6 +37,7 @@ class GradEntryScanner:
         self.migrations_seen = 0
         self.trades_emitted = 0
         self.vetoed = 0
+        self._recent = {}  # mint -> last emit ts (WS can double-deliver a migration; dedupe)
 
     async def _security_vet(self, mint: str) -> bool:
         """Hard safety: solana token MUST have mint+freeze authority revoked to trade."""
@@ -94,6 +95,13 @@ class GradEntryScanner:
         if not mint:
             return
         self.migrations_seen += 1
+        now = time.time()
+        if now - self._recent.get(mint, 0) < 300:
+            logger.info(f"GRAD {mint[:8]}... duplicate migration event within 5min -> ignored")
+            return
+        self._recent[mint] = now
+        if len(self._recent) > 500:
+            self._recent = {k: v for k, v in self._recent.items() if now - v < 3600}
         logger.info(f"GRAD MIGRATION {mint[:12]}... ({self.migrations_seen} seen)")
         if not await self._security_vet(mint):
             self.vetoed += 1
