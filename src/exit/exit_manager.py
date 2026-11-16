@@ -472,7 +472,9 @@ class ExitManager:
             # Callback for MiniTransformer online update (director: learn from every close)
             if self.on_position_close:
                 try:
-                    label = 1 if state.get('realized_usd', 0) > 0 else 0
+                    # realized_usd is gross cash returned, not profit - label on net pnl.
+                    pnl_usd = float(state.get('realized_usd', 0) or 0) - float(state.get('buy_amount', 0) or 0)
+                    label = 1 if pnl_usd > 0 else 0
                     # Pass full state for feature building in callback
                     close_data = {
                         'token_address': state['token_address'],
@@ -480,6 +482,7 @@ class ExitManager:
                         'entry_price': state['entry_price'],
                         'exit_price': state['current_price'],
                         'realized_usd': state.get('realized_usd', 0),
+                        'pnl_usd': pnl_usd,
                         'entry_mcap': state.get('entry_mcap', 0),
                         'buy_amount': state.get('buy_amount', 0),
                         'reason': reason,

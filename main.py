@@ -167,7 +167,7 @@ class MemeEngine:
                 }
                 features = self.mini_featurizer.featurize(signal_for_feats, equity_usd)
                 self.mini_transformer.update(features, label)
-                logger.info(f"MiniTransformer updated: {close_data.get('token_address','')[:8]}... label={'WIN' if label else 'LOSS'} pnl=${close_data.get('realized_usd',0):+.2f}")
+                logger.info(f"MiniTransformer updated: {close_data.get('token_address','')[:8]}... label={'WIN' if label else 'LOSS'} pnl=${close_data.get('pnl_usd',0):+.2f}")
             except Exception as e:
                 logger.debug(f"MiniTransformer update error: {e}")
 
