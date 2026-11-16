@@ -592,7 +592,15 @@ class MemeEngine:
             risk_cap = self._risk_cap_for_score(score)
 
         # Kelly from history or fallback to score-implied p
-        if len(pnls) >= 10:
+        if source == 'pumpfun_migration':
+            # Grad edge is externally validated (backtest n=250), not estimated from
+            # 11 live closes - empirical Kelly on that tiny noisy sample is <= 0 and
+            # silently zeroed every grad entry. Use the score-implied bootstrap Kelly
+            # inside the grad risk ladder; empirical Kelly still governs other signals.
+            p_implied = 0.20 + (score / 100) * 0.40
+            kelly = kelly_fraction(p_implied, 3.0, fractional=risk_cfg.get('kelly_fraction', 0.25),
+                                   cap=risk_cap)
+        elif len(pnls) >= 10:
             kelly = meme_kelly_from_trades(pnls, fractional=risk_cfg.get('kelly_fraction', 0.25),
                                            cap=risk_cap)
         else:

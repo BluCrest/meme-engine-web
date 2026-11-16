@@ -606,8 +606,9 @@ class DemoWallet:
         value = _decimal(usd_amount)
         if value <= 0 or self._sol_usd_micro <= 0:
             return 0
-        cents = int((value * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        return (cents * 10**13) // self._sol_usd_micro
+        # Micro-USD granularity: cent rounding silently zeroed sub-$0.005 sizes.
+        micro = int((value * MICRO_USD_PER_USD).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        return (micro * 10**9) // self._sol_usd_micro
 
     def lamports_to_usd(self, lamports: int) -> Decimal:
         return (
