@@ -9,6 +9,11 @@ chains:
     ws_fallback_urls:
       - "wss://solana-rpc.publicnode.com"
       - "wss://api.mainnet-beta.solana.com"
+    # HTTP RPC fallbacks for the vet agents. When Helius returns "account index
+    # overloaded", getAccountInfo still answers on these (verified 2026-11-16).
+    rpc_fallback_urls:
+      - "https://solana-rpc.publicnode.com"
+      - "https://api.mainnet-beta.solana.com"
     private_key: "${SOLANA_PRIVATE_KEY}"
     # Legacy quote-api.jup.ag/v6 is DNS-dead; lite-api is the live exact-in quote host.
     jupiter_api: "https://lite-api.jup.ag/swap/v1"

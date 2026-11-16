@@ -41,7 +41,6 @@ FRESH_READ_BACKOFF = (3.0, 5.0)  # seconds between retry attempts
 
 class SolanaRPC:
     """RPC client with URL fallback chain + 429 retry (public RPC rate-limits hard)."""
-
     def __init__(self, rpc_url: str, fallback_urls: list = None, helius_key: str = None):
         urls = [rpc_url or 'https://api.mainnet-beta.solana.com']
         for u in (fallback_urls or []):
@@ -88,13 +87,23 @@ class SolanaRPC:
         return None
 
 
+def _build_solana_rpc(chains_config: dict) -> SolanaRPC:
+    """Shared RPC chain for the vet agents: Helius first (fast when healthy),
+    Ankr, then public fallbacks. A depleted or overloaded key must not blind the
+    security gate - getAccountInfo answered on both public endpoints 2026-11-16."""
+    cfg = (chains_config or {}).get('solana', {})
+    fallbacks = [cfg.get('ankr_rpc')]
+    fallbacks.extend(cfg.get('rpc_fallback_urls') or [])
+    return SolanaRPC(cfg.get('rpc_url'), fallbacks, cfg.get('helius_api_key'))
+
+
 class SolanaSecurityAgent:
     """Mint/freeze authority check - unrevoked authority on a pump.fun token is a
     hard rug vector (dev can mint infinite supply / freeze your tokens)."""
 
     def __init__(self, config: dict, chains_config: dict):
         cfg = (chains_config or {}).get('solana', {})
-        self.rpc = SolanaRPC(cfg.get('rpc_url'), [cfg.get('ankr_rpc')], cfg.get('helius_api_key'))
+        self.rpc = _build_solana_rpc(chains_config)
         self._owner_cache = {}
 
     async def _is_program_held(self, authority: str) -> bool:
@@ -152,7 +161,7 @@ class SolanaHoldersAgent:
 
     def __init__(self, config: dict, chains_config: dict):
         cfg = (chains_config or {}).get('solana', {})
-        self.rpc = SolanaRPC(cfg.get('rpc_url'), [cfg.get('ankr_rpc')], cfg.get('helius_api_key'))
+        self.rpc = _build_solana_rpc(chains_config)
 
     async def check(self, token: str, chain: str, coin_signal: Dict) -> Dict:
         largest = None
@@ -221,7 +230,7 @@ class SolanaDevAgent:
 
     def __init__(self, config: dict, chains_config: dict):
         cfg = (chains_config or {}).get('solana', {})
-        self.rpc = SolanaRPC(cfg.get('rpc_url'), [cfg.get('ankr_rpc')], cfg.get('helius_api_key'))
+        self.rpc = _build_solana_rpc(chains_config)
 
     async def check(self, token: str, chain: str, coin_signal: Dict) -> Dict:
         creator = coin_signal.get('creator')
