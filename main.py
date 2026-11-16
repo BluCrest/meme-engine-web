@@ -193,6 +193,10 @@ class MemeEngine:
         self.running = True
         # Ledger wallet must be initialized before any balance/equity reads.
         await self.demo_wallet.ensure_initialized()
+        # Mark SOL live BEFORE the first signal can fill (boot fallback is not a market).
+        sol_boot = await self._refresh_sol_price()
+        if sol_boot:
+            logger.info(f"SOL mark at boot: ${sol_boot:.2f}")
         # Demo reset: close zombie paper positions flat (no fake pnl) so the book starts clean
         if self.paper_mode and self.demo_wallet.reset_on_boot:
             try:
@@ -336,6 +340,23 @@ class MemeEngine:
             except Exception as e:
                 logger.error(f"Signal processing error: {e}", exc_info=True)
     
+    async def _refresh_sol_price(self):
+        """Mark SOL live before the first fill - the boot fallback must never price trades."""
+        try:
+            sol_live = await asyncio.wait_for(
+                self.executor.get_token_live_data(
+                    "So11111111111111111111111111111111111111112", "solana", self.config['chains']
+                ),
+                timeout=10,
+            )
+            price = float((sol_live or {}).get('priceUsd', 0) or 0)
+            if price > 0:
+                self.demo_wallet.set_sol_price(price)
+                return price
+        except Exception as e:
+            logger.debug(f"SOL price refresh failed: {e}")
+        return None
+
     async def _balance_broadcast_loop(self):
         """Honest paper book report to Telegram: live SOL mark, wallet snapshot, realized PnL.
         Director order 2026-11-14: efficient reporting, no inflation - all marks live, all costs in."""
@@ -346,14 +367,8 @@ class MemeEngine:
             try:
                 await asyncio.sleep(60)
                 logger.info("Balance tick running")
-                # LIVE SOL price mark (fallback $200 would inflate the book 2.8x at $72 SOL)
-                try:
-                    sol_live = await self.executor.get_token_live_data(
-                        "So11111111111111111111111111111111111111112", "solana", self.config['chains'])
-                    if sol_live.get('priceUsd', 0) > 0:
-                        self.demo_wallet.set_sol_price(sol_live['priceUsd'])
-                except Exception:
-                    pass
+                # LIVE SOL price mark (a stale bootstrap price misprices entry vs exit)
+                await self._refresh_sol_price()
                 snap = self.demo_wallet.snapshot()
                 stats = self.db.get_stats()
                 equity_usd = snap['equity_usd']

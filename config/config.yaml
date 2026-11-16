@@ -193,7 +193,7 @@ paper:
   slippage_pct: 2.0            # applied AGAINST us on every fill (up on buys, down on sells)
   slippage_bps: 200            # exact-in Jupiter slippage tolerance
   fee_pct: 0.30                # DEX fee taken on every fill
-  fallback_sol_usd: 200.0      # SOL price for ledger if no feed
+  fallback_sol_usd: 72.0       # bootstrap only - live SOL mark is fetched at boot and every minute
   reset_on_boot: false         # PERSIST the book across restarts (director: lifetime P&L must accumulate; exit manager rehydrates open positions from db)
   ledger_db_path: "data/wallet_ledger.db"
   legacy_state_path: "data/demo_wallet.json"
