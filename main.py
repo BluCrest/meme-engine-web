@@ -558,9 +558,12 @@ class MemeEngine:
         # Minimum score threshold - use the overseer's ACTUAL gate when present
         # (lenient 45 bootstrap vs strict 60). Hard-coding scout.min_score here was
         # re-killing lenient 45-59 passes at the second gate (45-vs-60 contradiction).
+        # GRAD PATH: the scanner sets threshold_used=0 = score gate bypassed (the edge
+        # is the graduation event). Do not let memory fade silently re-gate it.
         min_score = signal.get('threshold_used') or self.config.get('scout', {}).get('min_score', 50)
-        if score < min_score:
-            logger.debug(f"Score {score} below threshold {min_score}, skipping")
+        grad_bypass = source == 'pumpfun_migration' and signal.get('threshold_used') == 0
+        if not grad_bypass and score < min_score:
+            logger.info(f"Score {score:.0f} below threshold {min_score}, skipping {token_address[:8]}...")
             return
 
         # --- Quant-bot inspired sizing: Kelly + vol targeting + soft DD ---
