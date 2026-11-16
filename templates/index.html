@@ -220,10 +220,11 @@
                 
                 tbody.innerHTML = positions.map(p => {
                     const entry = Number(p.entry_price) || 0;
-                    const cur = Number(p.current_price ?? p.entry_price) || entry;
-                    let pnl = 0;
-                    if (entry > 0 && isFinite(cur) && isFinite(entry)) pnl = ((cur - entry) / entry) * 100;
-                    if (!isFinite(pnl)) pnl = 0;
+                    const cur = p.current_price === null || p.current_price === undefined ? null : Number(p.current_price);
+                    const pnl = p.pnl_percent === null || p.pnl_percent === undefined ? null : Number(p.pnl_percent);
+                    const hasPnl = pnl !== null && isFinite(pnl);
+                    const hasCur = cur !== null && isFinite(cur);
+                    const pnlSource = p.pnl_source || 'unavailable';
                     const addr = p.token_address || '';
                     const explorer = p.chain === 'base' ? `https://basescan.org/token/${addr}` : p.chain === 'robinhood' ? `https://robinhoodchain.blockscout.com/token/${addr}` : p.chain === 'solana' ? `https://solscan.io/token/${addr}` : `https://dexscreener.com/${p.chain}/${addr}`;
                     const dexs = `https://dexscreener.com/${p.chain}/${addr}`;
@@ -237,8 +238,8 @@
                             </td>
                             <td><span class="badge badge-${p.chain}">${p.chain}</span></td>
                             <td>$${isFinite(entry) ? entry.toFixed(8) : '0.00000000'}</td>
-                            <td>$${isFinite(cur) ? cur.toFixed(8) : entry.toFixed(8)}</td>
-                            <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}${isFinite(pnl) ? pnl.toFixed(2) : '0.00'}%</td>
+                            <td title="${pnlSource}">${hasCur ? '$' + cur.toFixed(8) : '--'}</td>
+                            <td class="${hasPnl ? (pnl >= 0 ? 'positive' : 'negative') : ''}" title="${pnlSource}">${hasPnl ? (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%' : '--'}</td>
                         </tr>
                     `;
                 }).join('');

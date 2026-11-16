@@ -1,0 +1,33 @@
+fly.toml
+render.yaml
+.git/
+.github/
+__pycache__/
+*.py[cod]
+.venv/
+.venv
+.envrc
+
+# Secrets must never be baked into an image - Fly secrets provide them at runtime
+.env
+*.env
+config/.env
+config/sol.env
+
+# Local runtime state (the Fly volume supplies /app/data at runtime)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.jsonl
+data/*.log
+data/tg_chat_id.txt
+data/tg_offset.txt
+boot_*.txt
+boot_*.log
+
+# Local-only tooling/docs
+docs/
+logs/
+check_confidence.py
+test_config.py
+debug_*.py

@@ -105,7 +105,7 @@ class MemeTelegramBot:
                     "🚀 <b>Meme Engine TG</b> (paper $0.10) - @memeonmoneybot\n"
                     "<b>Chat commands:</b>\n"
                     "/status - engine + halt + paper\n"
-                    "/positions - open positions live pnl/x/mcap (tap addr to copy)\n"
+                    "/positions - open positions exact Jupiter sell-quote pnl/x (tap addr to copy)\n"
                     "/pnl - closed trades win rate + payoff\n"
                     "/scan - base/robinhood GoldRush heartbeat\n"
                     "/memory - journal + lifecycles /10000 for transformer\n"
@@ -137,7 +137,7 @@ class MemeTelegramBot:
             elif cmd == "/buy" and len(args)>=1:
                 # manual paper buy via TG
                 token = args[0]
-                chain = args[1] if len(args)>1 else "robinhood"
+                chain = args[1] if len(args)>1 else "solana"
                 import asyncio
                 try:
                     asyncio.run(engine._evaluate_signal({'token_address': token, 'chain': chain, 'source': 'tg_manual', 'score': 80, 'price': 0.0001}))
@@ -146,29 +146,44 @@ class MemeTelegramBot:
                     return f"Buy failed: {e}"
             elif cmd == "/positions":
                 from src.utils.database import TradeDatabase
-                import requests as req
+                try:
+                    from utils.jupiter_pnl import compute_unrealized_pnl, get_sol_usd, quote_url_from_config
+                    from utils.config import load_config
+                except ImportError:
+                    from src.utils.jupiter_pnl import compute_unrealized_pnl, get_sol_usd, quote_url_from_config
+                    from src.utils.config import load_config
                 db = TradeDatabase()
                 positions = db.get_open_positions()
                 db.close()
                 if not positions:
                     return "No open positions"
+                cfg = getattr(engine, 'config', None) or load_config()
+                quote_url = quote_url_from_config(cfg)
+                slippage_bps = int(cfg.get('paper', {}).get('slippage_bps', 200))
+                sol_usd = get_sol_usd()
                 lines = []
                 for p in positions[:5]:
                     try:
                         chain = p.get('chain','base')
                         token = p.get('token_address','')
                         entry = float(p.get('entry_price',0) or 0)
-                        # live price
-                        cur = entry
-                        try:
-                            r = req.get(f"https://api.dexscreener.com/tokens/v1/{chain}/{token}", timeout=5)
-                            if r.status_code==200 and isinstance(r.json(), list) and r.json():
-                                cur = float(r.json()[0].get('priceUsd',0) or entry)
-                        except: pass
-                        pnl = ((cur-entry)/entry*100) if entry else 0
-                        x = cur/entry if entry else 1
-                        addr = token
-                        lines.append(f"{p.get('token_symbol','???')} <code>{addr[:6]}...{addr[-4:]}</code> {chain}\nEntry ${entry:.8f} -> ${cur:.8f} {pnl:+.2f}% x{x:.2f}\n<a href='https://dexscreener.com/{chain}/{token}'>dex</a> | <code>{token}</code>")
+                        pnl = compute_unrealized_pnl(
+                            p,
+                            quote_url=quote_url,
+                            slippage_bps=slippage_bps,
+                            sol_usd=sol_usd,
+                        )
+                        pnl_pct = pnl.get('pnl_percent')
+                        x = pnl.get('x_return')
+                        cur = pnl.get('current_price')
+                        price_line = f"Entry ${entry:.8f}"
+                        if cur is not None:
+                            price_line += f" -> ${cur:.8f}"
+                        if pnl_pct is not None:
+                            pnl_line = f"{pnl_pct:+.2f}% x{x:.2f}"
+                        else:
+                            pnl_line = f"PnL unavailable ({pnl.get('reason','no quote')})"
+                        lines.append(f"{p.get('token_symbol','???')} <code>{token[:6]}...{token[-4:]}</code> {chain}\n{price_line} {pnl_line}\n<a href='https://dexscreener.com/{chain}/{token}'>dex</a> | <code>{token}</code>")
                     except Exception as e:
                         lines.append(str(e)[:100])
                 return "\n\n".join(lines) + "\n\n<i>Tap address to copy</i>"
@@ -221,7 +236,10 @@ class MemeTelegramBot:
     def _poll_loop(self):
         while self._running:
             try:
-                for upd in self._get_updates():
+                updates = self._get_updates()
+                if updates:
+                    print(f"[TG] Received {len(updates)} update(s)")
+                for upd in updates:
                     self.offset = int(upd["update_id"]) + 1
                     try:
                         from pathlib import Path
@@ -232,18 +250,35 @@ class MemeTelegramBot:
                     text = msg.get("text", "")
                     chat_id = str(msg.get("chat", {}).get("id", ""))
                     if text and chat_id:
+                        print(f"[TG] From {chat_id}: {text}")
                         if not self.chat_id or self.chat_id != chat_id:
                             self.chat_id = chat_id
                             self._save_chat(chat_id)
                         reply = self._handle(text, chat_id)
                         if reply:
-                            self.send(chat_id, reply)
-            except:
+                            ok = self.send(chat_id, reply)
+                            print(f"[TG] Reply sent: {ok}")
+            except Exception as e:
+                print(f"[TG] Polling error: {e}")
                 time.sleep(2)
 
     def start(self):
         if not self.token or self.token.startswith("${"):
             print("[TG] no token - TG frontend disabled")
+            return None
+        # Validate token
+        try:
+            resp = requests.get(
+                _API.format(token=self.token) + "getMe",
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                print(f"[TG] Invalid token: {resp.text}")
+                return None
+            bot_info = resp.json().get("result", {})
+            print(f"[TG] Bot @{bot_info.get('username')} (id: {bot_info.get('id')}) connected")
+        except Exception as e:
+            print(f"[TG] Token validation failed: {e}")
             return None
         self._running = True
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)

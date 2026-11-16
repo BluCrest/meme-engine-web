@@ -51,42 +51,40 @@ def get_status():
 @app.route('/api/positions', methods=['GET'])
 def get_positions():
     from utils.database import TradeDatabase
-    import requests
+    from utils.jupiter_pnl import compute_unrealized_pnl, get_sol_usd, quote_url_from_config
+    from utils.config import load_config
     db = TradeDatabase()
     positions = db.get_open_positions()
     db.close()
-    # Enrich with live price/mcap for correct PnL (paper uses live feeds, only money is demo)
+    cfg = load_config()
+    quote_url = quote_url_from_config(cfg)
+    slippage_bps = int(cfg.get('paper', {}).get('slippage_bps', 200))
+    sol_usd = get_sol_usd()
     for p in positions:
+        p['current_mcap'] = None
+        p['pnl_percent'] = None
+        p['x_return'] = None
+        p['profit_usd'] = None
+        p['current_price'] = None
         try:
-            chain = p.get('chain','base')
-            token = p.get('token_address','')
-            if not token: continue
-            url = f"https://api.dexscreener.com/tokens/v1/{chain}/{token}"
-            r = requests.get(url, timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                if isinstance(data, list) and data:
-                    live_price = float(data[0].get('priceUsd', 0) or 0)
-                    live_mcap = float(data[0].get('marketCap', 0) or data[0].get('fdv', 0) or 0)
-                    p['current_price'] = live_price if live_price>0 else p.get('entry_price',0)
-                    p['current_mcap'] = live_mcap
-                    entry = float(p.get('entry_price',0) or 0)
-                    if entry>0 and live_price>0:
-                        p['pnl_percent'] = ((live_price - entry)/entry*100)
-                        p['x_return'] = live_price/entry
-                        buy = float(p.get('entry_amount_usd',0) or 0)
-                        p['profit_usd'] = (live_price/entry*buy - buy) if entry>0 else 0
-                    else:
-                        p['pnl_percent'] = 0
-                        p['x_return'] = 1
-                else:
-                    p['current_price'] = p.get('entry_price',0)
-                    p['pnl_percent'] = 0
-            else:
-                p['current_price'] = p.get('entry_price',0)
+            pnl = compute_unrealized_pnl(
+                p,
+                quote_url=quote_url,
+                slippage_bps=slippage_bps,
+                sol_usd=sol_usd,
+            )
+            p['pnl_percent'] = pnl.get('pnl_percent')
+            p['x_return'] = pnl.get('x_return')
+            p['profit_usd'] = pnl.get('profit_usd')
+            p['current_price'] = pnl.get('current_price')
+            p['pnl_source'] = pnl.get('pnl_source')
+            p['exit_quote_lamports'] = pnl.get('exit_quote_lamports')
+            p['entry_sol_lamports_remaining'] = pnl.get('entry_sol_lamports_remaining')
+            p['token_amount_raw_remaining'] = pnl.get('token_amount_raw_remaining')
+            p['pnl_reason'] = pnl.get('reason')
         except Exception as e:
-            p['current_price'] = p.get('entry_price',0)
-            p['pnl_percent'] = 0
+            p['pnl_source'] = 'error'
+            p['pnl_reason'] = str(e)
     return jsonify(positions)
 
 @app.route('/api/stats', methods=['GET'])

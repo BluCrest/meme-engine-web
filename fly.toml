@@ -1,0 +1,21 @@
+app = 'meme-engine-worker'
+primary_region = 'ord'
+
+[build]
+
+[env]
+  PYTHONUNBUFFERED = '1'
+
+[processes]
+  worker = '.venv/bin/python main.py worker'
+
+# Persistent state (trades.db, demo_wallet.json, memory.jsonl, TG chat/offset).
+# Without this every deploy/restart wipes Sol's book.
+[[mounts]]
+  source = 'sol_data'
+  destination = '/app/data'
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1

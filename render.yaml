@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: meme-engine-web
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py web"
+    healthCheckPath: /api/status
+    envVars:
+      # Render injects PORT itself - never override it or the proxy cannot reach us.
+      - key: PYTHON_VERSION
+        value: "3.13.3"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Dashboard only. The trading engine (Telegram poller) runs on Fly with a
+      # persistent volume. Deliberately NO TELEGRAM_BOT_TOKEN here: two getUpdates
+      # pollers on one bot token = HTTP 409 and a silent bot.

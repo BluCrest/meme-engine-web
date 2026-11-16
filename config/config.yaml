@@ -3,8 +3,15 @@ chains:
     enabled: true
     rpc_url: "https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
     ws_url: "wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}"
+    # Helius free plan rejects WS with HTTP 429 (verified 2026-11-16). The scout
+    # walks this list until one connects; these two public WS endpoints answered
+    # logsSubscribe live.
+    ws_fallback_urls:
+      - "wss://solana-rpc.publicnode.com"
+      - "wss://api.mainnet-beta.solana.com"
     private_key: "${SOLANA_PRIVATE_KEY}"
-    jupiter_api: "https://quote-api.jup.ag/v6"
+    # Legacy quote-api.jup.ag/v6 is DNS-dead; lite-api is the live exact-in quote host.
+    jupiter_api: "https://lite-api.jup.ag/swap/v1"
     pump_fun_program: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
     helius_api_key: "${HELIUS_API_KEY}"
     ankr_rpc: "https://rpc.ankr.com/solana/${ANKR_API_KEY}"
@@ -115,6 +122,7 @@ execution:
   max_buy_amount_usd: 200.0      # guardrail cap, director tunes (was 0.25 - strangled Kelly)
   size_floor_usd: 0.0            # NO rigid floor - flexible sizing (director order 2026-11-11)
   max_slippage_percent: 5
+  max_token_age_seconds: 1800   # hard buy gate; missing/unverifiable pairCreatedAt also rejects
   gas_price_multiplier: 1.2
   retry_attempts: 3
   retry_delay_seconds: 2
@@ -178,9 +186,13 @@ portfolio:
 paper:
   initial_sol: 0.1             # starting demo cash (SOL) - director set 2026-11-11
   slippage_pct: 2.0            # applied AGAINST us on every fill (up on buys, down on sells)
+  slippage_bps: 200            # exact-in Jupiter slippage tolerance
   fee_pct: 0.30                # DEX fee taken on every fill
   fallback_sol_usd: 200.0      # SOL price for ledger if no feed
   reset_on_boot: false         # PERSIST the book across restarts (director: lifetime P&L must accumulate; exit manager rehydrates open positions from db)
+  ledger_db_path: "data/wallet_ledger.db"
+  legacy_state_path: "data/demo_wallet.json"
+  jupiter_quote_url: "https://api.jup.ag/swap/v1"
 
 # Graduation-entry scanner - Sol's core edge (director 2026-11-14)
 # Buy at PumpSwap migration; backtest n=250 honest: hold24h+stop30 June +112% / July +60% EV;
@@ -188,9 +200,30 @@ paper:
 grad_entry:
   enabled: true
   score: 75                    # feeds the confidence ladder (75 -> base 2% cap)
+  risk_mult:
+    base_pct: 5.0              # base risk cap 5% of equity per grad trade
+    high_score: 80             # score >= 80 -> 8%
+    high_pct: 8.0
+    very_high_score: 90        # score >= 90 -> 10% (max)
+    very_high_pct: 10.0
   price_timeout_seconds: 240   # DexScreener retry window for fresh pools (never buy blind)
   price_poll_seconds: 20
   max_mcap_usd: 0              # 0 = no mcap cap (edge is the event itself)
+  min_liquidity_usd: 0         # 0 = disabled; set >0 to filter low-liq grads (backtest first)
+  # Exit profile for graduation trades (config gated; default off until backtest-validated)
+  exit_profile:
+    enabled: false
+    stop_pct: 30               # fixed 30% stop from entry
+    hold_hours: 24             # time exit
+    tiers:
+      - multiplier: 2
+        sell_pct: 25
+      - multiplier: 5
+        sell_pct: 25
+      - multiplier: 10
+        sell_pct: 25
+    trail_after_mult: 2        # trail only after 2x
+    trail_pct: 20
 
 telegram:
   bot_token: "${TELEGRAM_BOT_TOKEN}"

@@ -38,6 +38,10 @@ ENV/
 data/trades.db
 data/trades.db-wal
 data/trades.db-shm
+data/wallet_ledger.db
+data/wallet_ledger.db-wal
+data/wallet_ledger.db-shm
+data/wallet_ledger.db.reset-*
 data/demo_wallet.json
 data/memory.jsonl
 data/engine.log

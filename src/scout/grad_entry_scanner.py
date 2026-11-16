@@ -32,7 +32,18 @@ class GradEntryScanner:
         self.price_timeout_s = g.get('price_timeout_seconds', 240)
         self.price_poll_s = g.get('price_poll_seconds', 20)
         self.score = g.get('score', 75)
-        self.max_mcap_usd = g.get('max_mcap_usd', 0)  # 0 = no cap
+        self.max_mcap_usd = g.get('max_mcap_usd', 0)
+        self.min_liquidity_usd = g.get('min_liquidity_usd', 0)
+        # risk multiplier ladder for grad trades (director: base 5%, high 8%, very_high 10%)
+        rm = g.get('risk_mult', {}) or {}
+        self.risk_base_pct = rm.get('base_pct', 5.0)
+        self.risk_high_score = rm.get('high_score', 80)
+        self.risk_high_pct = rm.get('high_pct', 8.0)
+        self.risk_vhigh_score = rm.get('very_high_score', 90)
+        self.risk_vhigh_pct = rm.get('very_high_pct', 10.0)
+        # exit profile (optional, gated)
+        ep = g.get('exit_profile', {}) or {}
+        self.exit_profile = ep if ep.get('enabled') else None
         self._running = False
         self.migrations_seen = 0
         self.trades_emitted = 0
@@ -113,6 +124,16 @@ class GradEntryScanner:
         if self.max_mcap_usd and px['mcap'] > self.max_mcap_usd:
             logger.info(f"GRAD {mint[:8]}... mcap ${px['mcap']:.0f} above cap -> SKIP")
             return
+        if self.min_liquidity_usd and px['liquidityUsd'] < self.min_liquidity_usd:
+            logger.info(f"GRAD {mint[:8]}... liq ${px['liquidityUsd']:.0f} below min -> SKIP")
+            return
+        # risk multiplier for grad trades (overrides global confidence_scaling)
+        if self.score >= self.risk_vhigh_score:
+            risk_cap_pct = self.risk_vhigh_pct
+        elif self.score >= self.risk_high_score:
+            risk_cap_pct = self.risk_high_pct
+        else:
+            risk_cap_pct = self.risk_base_pct
         signal = {
             'token_address': mint,
             'chain': 'solana',
@@ -124,6 +145,8 @@ class GradEntryScanner:
             'threshold_used': 0,  # score gate bypassed: edge is the graduation event itself
             'token_info': {'symbol': px['symbol'], 'name': px['symbol']},
             'graduated_at': int(time.time()),
+            'grad_risk_cap_pct': risk_cap_pct,
+            'grad_exit_profile': self.exit_profile,
         }
         self.trades_emitted += 1
         logger.info(f"GRAD SIGNAL {mint[:8]}... ${px['priceUsd']:.8f} mcap ${px['mcap']:.0f} -> pipeline")

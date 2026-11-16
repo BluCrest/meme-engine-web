@@ -186,8 +186,22 @@ class NewPairDetector:
             logger.warning("Missing solana dependencies. Install: pip install websockets solders base58")
             return
         
-        ws_url = chain_config.get('ws_url', 'wss://api.mainnet-beta.solana.com')
         pump_program = chain_config.get('pump_fun_program', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
+
+        # WS endpoint chain: a rate-limited or exhausted primary key must never
+        # leave the new-pair scout blind. Order: configured primary, configured
+        # fallbacks, then verified public endpoints (2026-11-16: Helius free WS
+        # returns HTTP 429; publicnode/mainnet accept logsSubscribe).
+        ws_candidates = []
+        for url in [chain_config.get('ws_url'), *chain_config.get('ws_fallback_urls', [])]:
+            if url and '${' not in url and url not in ws_candidates:
+                ws_candidates.append(url)
+        for url in ('wss://solana-rpc.publicnode.com', 'wss://api.mainnet-beta.solana.com'):
+            if url not in ws_candidates:
+                ws_candidates.append(url)
+
+        def _ws_label(url: str) -> str:
+            return url.split('?', 1)[0]
         
         # DexScreener fallback: solana token-boosts latest
         async def _check_dexscreener_solana():
@@ -233,35 +247,60 @@ class NewPairDetector:
                 logger.debug(f"DexScreener solana fallback error: {e}")
             return False
         
+        backoff_step = 0
         while self.running:
-            try:
-                async with websockets.connect(ws_url) as ws:
-                    # Subscribe to Pump.fun program logs
-                    subscribe_msg = {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "logsSubscribe",
-                        "params": [
-                            {"mentions": [pump_program]},
-                            {"commitment": "processed"}
-                        ]
-                    }
-                    await ws.send(json.dumps(subscribe_msg))
-                    logger.info("Connected to Solana WebSocket, monitoring Pump.fun...")
-                    
-                    async for message in ws:
-                        if not self.running:
-                            break
-                        
-                        data = json.loads(message)
-                        if data.get('method') == 'logsNotification':
-                            await self._handle_pumpfun_logs(data, chain_config)
-                            
-            except Exception as e:
-                logger.error(f"Solana WebSocket error: {e}")
-                # Still try DexScreener fallback even when WS down
-                await _check_dexscreener_solana()
-                await asyncio.sleep(5)
+            last_error = None
+            for endpoint in ws_candidates:
+                if not self.running:
+                    break
+                try:
+                    async with websockets.connect(endpoint, open_timeout=20,
+                                                  ping_interval=25, ping_timeout=25) as ws:
+                        # Subscribe to Pump.fun program logs
+                        subscribe_msg = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "logsSubscribe",
+                            "params": [
+                                {"mentions": [pump_program]},
+                                {"commitment": "processed"}
+                            ]
+                        }
+                        await ws.send(json.dumps(subscribe_msg))
+                        logger.info(f"Connected to Solana WebSocket ({_ws_label(endpoint)}), monitoring Pump.fun...")
+                        backoff_step = 0
+                        last_error = None
+
+                        async for message in ws:
+                            if not self.running:
+                                break
+                            try:
+                                data = json.loads(message)
+                            except json.JSONDecodeError:
+                                continue
+                            if data.get('method') == 'logsNotification':
+                                await self._handle_pumpfun_logs(data, chain_config)
+                        # Stream ended cleanly - fall through and reconnect.
+                        break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    last_error = e
+                    continue
+
+            if not self.running:
+                break
+
+            # All endpoints failed or the live stream dropped: keep the fallback
+            # scout working and back off instead of hammering the RPC every 5s.
+            await _check_dexscreener_solana()
+            if last_error is not None:
+                level = logging.WARNING if backoff_step == 0 else logging.DEBUG
+                logger.log(level, f"Solana WS unavailable on {len(ws_candidates)} endpoint(s): {last_error}. "
+                                  f"DexScreener fallback active.")
+            delay = min(60, 5 * (2 ** min(backoff_step, 4)))
+            backoff_step += 1
+            await asyncio.sleep(delay)
     
     async def _handle_pumpfun_logs(self, data: dict, chain_config: dict):
         """Parse Pump.fun logs for new token creation events.
