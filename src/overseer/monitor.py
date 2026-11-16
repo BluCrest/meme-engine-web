@@ -41,12 +41,23 @@ class OverseerMonitor:
             token = pos['token_address']
             chain = pos['chain']
             entry = float(pos['entry_price'] or 0)
-            # Get live data
-            live = await self.executor.get_token_live_data(token, chain, self.chains_config)
-            cur_price = live.get('priceUsd', 0) or entry
-            mcap = live.get('mcap', 0)
-            liq = live.get('liquidityUsd', 0)
-            vol = live.get('volume24h', 0)
+            # Paper positions already carry an exact Jupiter sell-quote mark from the
+            # exit engine; DexScreener's fresh-pool price flip-flops (saw -100% then
+            # +226620%) and must not drive alerts or stop tightening.
+            cur_price = 0.0
+            state = self.exit_manager.get_position_state(pid) if self.exit_manager else None
+            if state and float(state.get('current_price') or 0) > 0:
+                cur_price = float(state['current_price'])
+            if cur_price <= 0:
+                live = await self.executor.get_token_live_data(token, chain, self.chains_config)
+                cur_price = float(live.get('priceUsd', 0) or 0)
+                mcap = live.get('mcap', 0)
+                liq = live.get('liquidityUsd', 0)
+                vol = live.get('volume24h', 0)
+            else:
+                mcap = liq = vol = 0
+            if cur_price <= 0:
+                continue
 
             # Track last check
             last = self.last_checks.get(pid)
@@ -57,6 +68,11 @@ class OverseerMonitor:
             # Positive: price rising >15% since last check and volume up
             price_chg = ((cur_price - last['price'])/last['price']*100) if last['price'] else 0
             liq_chg = ((liq - last['liq'])/last['liq']*100) if last['liq'] else 0
+            if last['price'] > 0 and (cur_price / last['price'] > 4 or cur_price / last['price'] < 0.25):
+                # Fresh pools still indexing: a >300% move in one 15s tick is a bad
+                # mark, not news. Resync silently instead of alerting on it.
+                self.last_checks[pid] = {'price': cur_price, 'mcap': mcap, 'liq': liq, 'time': time.time()}
+                continue
 
             alert_needed = None
             log_alert = None
