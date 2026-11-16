@@ -249,10 +249,19 @@ class JupiterQuoteClient:
 class SolanaRpcClient:
     """Minimal RPC client used only to resolve exact SPL mint decimals."""
 
-    def __init__(self, rpc_url: str = PUBLIC_SOLANA_RPC, timeout_seconds: int = 8):
-        if not rpc_url or "${" in rpc_url:
-            rpc_url = PUBLIC_SOLANA_RPC
-        self.rpc_url = rpc_url
+    def __init__(
+        self,
+        rpc_url: str = PUBLIC_SOLANA_RPC,
+        fallback_urls: Sequence[str] = (),
+        timeout_seconds: int = 8,
+    ):
+        urls: List[str] = []
+        for candidate in (rpc_url, *fallback_urls):
+            if not candidate or "${" in candidate or candidate in urls:
+                continue
+            urls.append(candidate)
+        self.urls = urls or [PUBLIC_SOLANA_RPC]
+        self.rpc_url = self.urls[0]
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
     async def get_mint_decimals(self, mint: str) -> Optional[int]:
@@ -262,20 +271,22 @@ class SolanaRpcClient:
             "method": "getAccountInfo",
             "params": [mint, {"encoding": "jsonParsed"}],
         }
-        try:
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(self.rpc_url, json=payload) as resp:
-                    if resp.status != 200:
-                        return None
-                    data = await resp.json()
-            value = (data.get("result") or {}).get("value") or {}
-            parsed = (value.get("data") or {}).get("parsed") or {}
-            info = parsed.get("info") or {}
-            decimals = info.get("decimals")
-            return int(decimals) if decimals is not None else None
-        except Exception as exc:
-            logger.debug("mint decimals RPC error %s: %s", mint[:8], exc)
-            return None
+        for url in self.urls:
+            try:
+                async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                value = (data.get("result") or {}).get("value") or {}
+                parsed = (value.get("data") or {}).get("parsed") or {}
+                info = parsed.get("info") or {}
+                decimals = info.get("decimals")
+                if decimals is not None:
+                    return int(decimals)
+            except Exception as exc:
+                logger.debug("mint decimals RPC error %s (%s): %s", mint[:8], url, exc)
+        return None
 
 
 class DemoWallet:
@@ -323,7 +334,8 @@ class DemoWallet:
         )
         self.quote_client = quote_client or JupiterQuoteClient(quote_url)
         self.rpc_client = rpc_client or SolanaRpcClient(
-            chain_cfg.get("rpc_url", PUBLIC_SOLANA_RPC)
+            chain_cfg.get("rpc_url", PUBLIC_SOLANA_RPC),
+            chain_cfg.get("rpc_fallback_urls") or (),
         )
 
         if self.reset_on_boot and self.ledger_path.exists():
