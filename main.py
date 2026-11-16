@@ -138,7 +138,7 @@ class MemeEngine:
         self.volume_scanner = VolumeScanner(self.config, self._on_new_signal)
         self.smart_money_tracker = SmartMoneyTracker(self.config, self._on_new_signal)
         # Graduation-entry scanner (director edge: buy at PumpSwap migration; backtest June+112%/July+60% EV)
-        self.grad_scanner = GradEntryScanner(self.config, self._on_new_signal)
+        self.grad_scanner = GradEntryScanner(self.config, self._on_new_signal, wallet=self.demo_wallet)
         self.running = False
         self.signal_queue = asyncio.Queue()
         self.paper_mode = self.config.get('execution', {}).get('paper_mode', True)
@@ -525,10 +525,16 @@ class MemeEngine:
                     'liquidityUsd': signal.get('liquidity_usd', 0), 'volume24h': 0}
             logger.info(f"Grad fallback price for {token_address[:8]}...: ${live['priceUsd']:.8f}")
         if live_price and live_price > 0:
-            signal['price'] = live_price
-            signal['mcap'] = live.get('mcap', 0)
-            signal['liquidity_usd'] = live.get('liquidityUsd', 0)
-            signal['volume24h'] = live.get('volume24h', 0)
+            # GRAD PATH: the scanner's price is an executable Jupiter quote taken at
+            # the migration; DexScreener's fresh-pool mark lags and must not overwrite it.
+            if source != 'pumpfun_migration' or not signal.get('price'):
+                signal['price'] = live_price
+            if live.get('mcap'):
+                signal['mcap'] = live['mcap']
+            if live.get('liquidityUsd'):
+                signal['liquidity_usd'] = live['liquidityUsd']
+            if live.get('volume24h'):
+                signal['volume24h'] = live['volume24h']
             logger.info(f"Live fetch {token_address[:8]}... on {chain}: price ${live_price:.8f} mcap ${live.get('mcap',0):.0f} liq ${live.get('liquidityUsd',0):.0f}")
         else:
             logger.warning(f"Live price missing for {token_address[:8]}... on {chain} - skipping (no synthetic mcap)")
@@ -635,7 +641,19 @@ class MemeEngine:
         logger.info(f"Kelly sizing: equity ${equity:.0f} kelly {kelly:.3f} vol_w {vol_w:.2f} -> ${buy_amount:.2f} (score ${score_amount:.2f}, stop ${ps['stop_price']:.8f})")
 
         # Strict age gate: never buy an old token, and never buy when age is unverifiable.
-        if not await self._token_age_gate(token_address, chain):
+        # GRAD PATH: age comes from the migration event itself (DexScreener may not
+        # have indexed the fresh pool yet); a just-graduated token cannot be old.
+        grad_age_ok = False
+        if source == 'pumpfun_migration' and signal.get('graduated_at'):
+            age = max(0.0, time.time() - float(signal['graduated_at']))
+            max_age = int(self.config.get('execution', {}).get('max_token_age_seconds', 1800))
+            if age <= max_age:
+                logger.info(f"Token age OK (migration event) mint={token_address} age_seconds={age:.1f}")
+                grad_age_ok = True
+            else:
+                logger.warning(f"REJECTED_OLD_TOKEN mint={token_address} reason=grad_event_too_old age_seconds={age:.0f}")
+                return
+        if not grad_age_ok and not await self._token_age_gate(token_address, chain):
             return
 
         if self.paper_mode:
@@ -646,6 +664,13 @@ class MemeEngine:
                 return
             trade_id = f"{token_address}:{int(signal.get('graduated_at') or time.time())}"
             fill = await self.demo_wallet.buy(token_address, sol_lamports, trade_id=trade_id)
+            if not fill and source == 'pumpfun_migration':
+                # Fresh pool: the quote can blink between scanner pricing and fill.
+                for _ in range(2):
+                    await asyncio.sleep(2)
+                    fill = await self.demo_wallet.buy(token_address, sol_lamports, trade_id=trade_id)
+                    if fill:
+                        break
             if not fill:
                 logger.warning(f"[PAPER] BUY REFUSED by ledger wallet (cash/quote) {token_address[:8]}...")
                 return

@@ -211,8 +211,9 @@ grad_entry:
     high_pct: 8.0
     very_high_score: 90        # score >= 90 -> 10% (max)
     very_high_pct: 10.0
-  price_timeout_seconds: 240   # DexScreener retry window for fresh pools (never buy blind)
-  price_poll_seconds: 20
+  quote_timeout_seconds: 90    # wait for Jupiter to route the fresh pool (never buy blind)
+  quote_poll_seconds: 3
+  quote_probe_sol: 0.01        # probe size used to derive the executable entry price
   max_mcap_usd: 0              # 0 = no mcap cap (edge is the event itself)
   min_liquidity_usd: 0         # 0 = disabled; set >0 to filter low-liq grads (backtest first)
   # Exit profile for graduation trades (config gated; default off until backtest-validated)
